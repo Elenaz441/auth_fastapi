@@ -2,9 +2,11 @@ from typing import Annotated
 from uuid import UUID
 import string
 import random
+
+from fastapi_users.authentication.transport.bearer import BearerResponse
 from redis import Redis
 from fastapi_users import FastAPIUsers
-from fastapi import APIRouter, Depends, HTTPException, Body, Response
+from fastapi import APIRouter, Depends, HTTPException, Body, Response, Cookie
 from fastapi_users.authentication import JWTStrategy
 from sqlalchemy import select
 
@@ -16,10 +18,8 @@ from auth import (
     get_refresh_jwt_strategy,
     get_jwt_strategy,
     UserManager,
-    add_token_to_blacklist,
-    is_in_blacklist
 )
-from schemas import UserRead, UserCreate, BearerRefreshResponse
+from schemas import UserRead, UserCreate
 from config import settings
 from mail_sender import get_login_message, conf
 from fastapi_mail import FastMail, MessageSchema, MessageType
@@ -55,24 +55,42 @@ async def authenticated_route(user: User = Depends(current_active_user)):
     return {"message": f"Hello {user.email}!"}
 
 
-@router.post(settings.api.v1.auth.refresh, response_model=BearerRefreshResponse)
+@router.post(settings.api.v1.auth.refresh, response_model=BearerResponse)
 async def refresh_token(
     strategy: Annotated[JWTStrategy, Depends(get_jwt_strategy)],
     refresh_strategy: Annotated[JWTStrategy, Depends(get_refresh_jwt_strategy)],
     user_manager: Annotated[UserManager, Depends(get_user_manager)],
-    refresh_token: Annotated[str, Body(..., embed=True)],
-    db: Annotated[AsyncSession, Depends(get_async_session)],
+    refresh_token: str | None = Cookie(default=None),
 ):
+    print(refresh_token)
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Refresh token not provided.")
 
     user = await refresh_strategy.read_token(refresh_token, user_manager)
-    if not user or await is_in_blacklist(refresh_token, db):
+    if not user:
         raise HTTPException(status_code=401, detail="Refresh token expired.")
 
-    await add_token_to_blacklist(refresh_token, db)
+    await refresh_strategy.destroy_token(refresh_token, user)
 
-    return await auth_backend_refresh.login(strategy, user)
+    response = await auth_backend_refresh.login(strategy, user)
+    return response
+# async def refresh_token(
+#     strategy: Annotated[JWTStrategy, Depends(get_jwt_strategy)],
+#     refresh_strategy: Annotated[JWTStrategy, Depends(get_refresh_jwt_strategy)],
+#     user_manager: Annotated[UserManager, Depends(get_user_manager)],
+#     refresh_token: Annotated[str, Body(..., embed=True)],
+#     db: Annotated[AsyncSession, Depends(get_async_session)],
+# ):
+#     if not refresh_token:
+#         raise HTTPException(status_code=401, detail="Refresh token not provided.")
+#
+#     user = await refresh_strategy.read_token(refresh_token, user_manager)
+#     if not user or await is_in_blacklist(refresh_token, db):
+#         raise HTTPException(status_code=401, detail="Refresh token expired.")
+#
+#     await add_token_to_blacklist(refresh_token, db)
+#
+#     return await auth_backend_refresh.login(strategy, user)
 
 
 @router.post(settings.api.v1.auth.login_email)
@@ -100,7 +118,7 @@ async def login_email(
     return Response(content="Message sent!", status_code=202)
 
 
-@router.post(settings.api.v1.auth.login_email_code, response_model=BearerRefreshResponse)
+@router.post(settings.api.v1.auth.login_email_code, response_model=BearerResponse)
 async def login_email_code(
     email: Annotated[str, Body(..., embed=True)],
     code: Annotated[str, Body(..., embed=True)],
