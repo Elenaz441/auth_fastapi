@@ -21,9 +21,23 @@ class MySQLAlchemyUserDatabase(SQLAlchemyUserDatabase):
         ))
         return await self._get_user(statement)
 
+    async def get_by_phone(self, phone: str) -> Optional[UP]:
+        statement = select(self.user_table).where(self.user_table.phone == phone)
+        return await self._get_user(statement)
+
+    async def get_by_name(self, name: str) -> Optional[UP]:
+        statement = select(self.user_table).where(self.user_table.name == name)
+        return await self._get_user(statement)
+
 
 engine = create_async_engine(str(settings.db.url))
 async_session_maker = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+redis_session = redis.asyncio.StrictRedis(host=settings.redis.host,
+                                         port=settings.redis.port,
+                                         password=settings.redis.password,
+                                         decode_responses=True)
 
 
 async def get_redis_async_session() -> AsyncGenerator[redis.Redis, None]:

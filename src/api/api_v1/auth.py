@@ -16,8 +16,6 @@ from auth import (
     get_refresh_jwt_strategy,
     get_jwt_strategy,
     UserManager,
-    add_token_to_blacklist,
-    is_in_blacklist
 )
 from schemas import UserRead, UserCreate, BearerRefreshResponse
 from config import settings
@@ -48,8 +46,6 @@ router.include_router(fastapi_users.get_register_router(UserRead, UserCreate))
 # )
 
 
-# TODO валидацию имени и телефона при регистрации
-
 @router.get("/authenticated-route")
 async def authenticated_route(user: User = Depends(current_active_user)):
     return {"message": f"Hello {user.email}!"}
@@ -61,16 +57,17 @@ async def refresh_token(
     refresh_strategy: Annotated[JWTStrategy, Depends(get_refresh_jwt_strategy)],
     user_manager: Annotated[UserManager, Depends(get_user_manager)],
     refresh_token: Annotated[str, Body(..., embed=True)],
-    db: Annotated[AsyncSession, Depends(get_async_session)],
+    redis: Annotated[Redis, Depends(get_redis_async_session)],
 ):
     if not refresh_token:
         raise HTTPException(status_code=401, detail="Refresh token not provided.")
 
     user = await refresh_strategy.read_token(refresh_token, user_manager)
-    if not user or await is_in_blacklist(refresh_token, db):
+    value = await redis.get(f"blacklist:{refresh_token}")
+    if not user or value:
         raise HTTPException(status_code=401, detail="Refresh token expired.")
 
-    await add_token_to_blacklist(refresh_token, db)
+    await redis.set(f"blacklist:{refresh_token}", refresh_token, ex=settings.auth.lifetime_seconds_refresh)
 
     return await auth_backend_refresh.login(strategy, user)
 
@@ -85,8 +82,8 @@ async def login_email(
     if user is None:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    code = ''.join(random.choices(string.digits, k=6)) # TODO убрать константы в настройки!
-    await redis.set(name=email, value=code, ex=300)
+    code = ''.join(random.choices(string.digits, k=settings.auth.auth_by_email_chars_count))
+    await redis.set(name=email, value=code, ex=settings.auth.lifetime_seconds_code)
 
     text = get_login_message(code)
     message = MessageSchema(

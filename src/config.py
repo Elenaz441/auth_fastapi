@@ -55,6 +55,8 @@ class AuthConfig(BaseModel):
     token_url: str = "/api/v1/auth/login"
     lifetime_seconds_access: int = 3600
     lifetime_seconds_refresh: int = 86400
+    auth_by_email_chars_count: int = 6
+    lifetime_seconds_code: int = 300
 
 
 class GoogleConfig(BaseModel):
